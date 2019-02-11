@@ -4,11 +4,9 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.LinkedList;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 public class DynamicReceiver {
@@ -20,6 +18,8 @@ public class DynamicReceiver {
     public static LinkedList<ServerSocket> servers=new LinkedList<>();
 
     public static LinkedList<ReceiverRunnable> receiverThreads=new LinkedList<>();
+    public static LinkedList<ChecksumRunnable> checksumThreads=new LinkedList<>();
+
     public static LinkedList<Socket> sockets=new LinkedList<>();
 
 
@@ -33,6 +33,7 @@ public class DynamicReceiver {
     public static LinkedBlockingQueue<DynamicCommon.FiverFile> checksumFiles=new LinkedBlockingQueue<>();
 
     public static int threadID=0;
+    public static int CHthreadID=0;
 
 
     public static ServerSocket ss;
@@ -75,15 +76,15 @@ public class DynamicReceiver {
         public void run() {
             try
             {
-
                 DataInputStream dataInputStream = new DataInputStream(clientSock.getInputStream());
-                byte[] buffer = new byte[128 * 1024];
-                while (!shouldIfinish) {
+
+                while (!shouldIfinish)
+                {
+                    if(dataInputStream.available()==0)
+                        continue;
                     String fileName = dataInputStream.readUTF();
                     long offset = dataInputStream.readLong();
                     long fileSize = dataInputStream.readLong();
-
-                    checksumFiles.offer(new DynamicCommon.FiverFile(new File(baseDir + fileName), offset, fileSize));
 
 
                     RandomAccessFile randomAccessFile = new RandomAccessFile(baseDir + fileName, "rw");
@@ -93,19 +94,36 @@ public class DynamicReceiver {
                     }
                     long remaining = fileSize;
                     int read = 0;
-                    long transferStartTime = System.currentTimeMillis();
+
+
+                    byte[] bufferChecksum = new byte[Math.toIntExact(remaining)];
+                    int bufferindex=0;
+
                     while (remaining > 0) {
+
+                        byte[] buffer = new byte[128 * 1024];
+
                         read = dataInputStream.read(buffer, 0, (int) Math.min(buffer.length, remaining));
                         if (read == -1)
                             break;
                         remaining -= read;
                         randomAccessFile.write(buffer, 0, read);
+
+                        for(int bi=0; bi<read; bi++)
+                        {
+                            bufferChecksum[bufferindex+bi]=buffer[bi];
+                        }
+
+                        bufferindex=bufferindex+read;
+
                     }
                     randomAccessFile.close();
                     if (read == -1) {
                         System.out.println("Read -1, closing the connection...");
                         return;
                     }
+                    checksumFiles.offer(new DynamicCommon.FiverFile(new File(baseDir + fileName), offset, fileSize, bufferChecksum));
+
                 }
                 dataInputStream.close();
                 clientSock.close();
@@ -125,18 +143,15 @@ public class DynamicReceiver {
             {
                 try
                 {
-                    for(int i=0; i<howmuch; i++)
+                    while (true)
                     {
-                        while (true)
-                        {
-                            Socket clientSock = ss.accept();
-                            clientSock.setSoTimeout(10000);
-                            System.out.println("Connection established from  " + clientSock.getInetAddress());
-                            sockets.add(clientSock);
+                        Socket clientSock = ss.accept();
+                        clientSock.setSoTimeout(10000);
+                        System.out.println("Connection established from  " + clientSock.getInetAddress());
+                        sockets.add(clientSock);
 
-                            ReceiverRunnable receiver= new ReceiverRunnable(threadID++, clientSock);
-                            receiverThreads.add(receiver);
-                        }
+                        ReceiverRunnable receiver= new ReceiverRunnable(threadID++, clientSock);
+                        receiverThreads.add(receiver);
                     }
                 } catch (Exception e) {
                     System.out.println(e);
@@ -159,10 +174,20 @@ public class DynamicReceiver {
         {
             if (type.equals("increment"))
             {
+                for (int i = 0; i < howmuch; i++)
+                {
+                    ChecksumRunnable checksumRunnable = new ChecksumRunnable(CHthreadID++);
+                    checksumThreads.add(checksumRunnable);
+                }
 
             }
             else if (type.equals("decrement"))
             {
+                for (int i = 0; i < howmuch; i++) {
+                    checksumThreads.remove(checksumThreads.size() - 1);
+                    checksumThreads.get(checksumThreads.size() - 1).shouldIfinish = true; //finish last thread
+                    checksumThreads.remove(checksumThreads.size() - 1);            //last one
+                }
 
             }
         }
@@ -182,20 +207,75 @@ public class DynamicReceiver {
     }
 
 
+    public static class ChecksumRunnable implements Runnable
+    {
+
+        int threadID;
+        boolean shouldIfinish=false;
+        Thread t;
+        MessageDigest md = null;
+
+
+        public ChecksumRunnable(int threadID)
+        {
+            this.threadID=threadID;
+
+            t=new Thread(this);
+            t.start();
+        }
+
+
+        long totalChecksumTime = 0;
+
+        @Override
+        public void run() {
+
+            try {
+                md = MessageDigest.getInstance("MD5");
+
+                md.reset();
+                DataOutputStream dataOutputStream = null;
+
+                ServerSocket socket = new ServerSocket(20180);
+                dataOutputStream = new DataOutputStream(socket.accept().getOutputStream());
+                System.out.println("Checksum Connection accepted");
+
+
+                while (!shouldIfinish) {
+                    DynamicCommon.FiverFile fiverFile = null;
+
+                    fiverFile = checksumFiles.poll(Long.MAX_VALUE, TimeUnit.SECONDS);
+
+                    if (fiverFile == null) {
+                        continue;
+                    }
+                    String fileName = fiverFile.file.getName();
+                    long fileOffset = fiverFile.offset;
+                    long fileLength = fiverFile.length;
+
+                    md.update(fiverFile.buffer, 0, Math.toIntExact(fiverFile.length));
+                    byte[] digest = md.digest();
+
+                    //String hex = (new HexBinaryAdapter()).marshal(digest);
+                    String hex = "aa";
+
+                    System.out.println("Sending hex:" + hex + " bytes:" + fileLength);
+                    dataOutputStream.writeUTF(hex);
+                    md.reset();
+                }
+
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
 
     public DynamicReceiver (int port, String path)
     {
         try {
-
             ss = new ServerSocket(2008);
-      /*      while (true)
-            {
-                Socket clientSock = ss.accept();
-                clientSock.setSoTimeout(10000);
-                System.out.println("Connection established from  " + clientSock.getInetAddress());
-                ReceiverRunnable receiver= new ReceiverRunnable(clientSock);
-            }
-        */}catch (Exception e){e.printStackTrace();}
+        }catch (Exception e){e.printStackTrace();}
 
 
 
