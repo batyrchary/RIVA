@@ -20,7 +20,7 @@
 
  
  ##### 3. Cite
- Please cite: "Towards Securing Data Transfers Against Silent Data Corruption." Batyr Charyyev, Ahmed Alhussen, Hemanta Sapkota, Eric Pouyoul, Mehmet Gunes and Engin Arslan IEEE/ACM International Symposium in Cluster, Cloud, and Grid Computing (CCGrid) 2019.
+ Please cite: **"Towards Securing Data Transfers Against Silent Data Corruption." Batyr Charyyev, Ahmed Alhussen, Hemanta Sapkota, Eric Pouyoul, Mehmet Gunes and Engin Arslan IEEE/ACM International Symposium in Cluster, Cloud, and Grid Computing (CCGrid) 2019.**
  
  
  ##### 4. RIVA
@@ -28,7 +28,7 @@
  ```sh
  $ cd src/
 $ javac RIVA_Receiver.java  # Compile Receiver
-$ java RIVA_Receiver [destination path] # Run Receiver, will be listening on port 2010 and checksum thread will be connected with port 20180
+$ java RIVA_Receiver [destination path] # Run Receiver, will be listening on port 2010 
 ```
 Compile and Run Sender
  ```sh
