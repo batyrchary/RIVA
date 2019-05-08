@@ -11,9 +11,11 @@
   
   ##### 2. Notes
   
-  -By default transfer threads will be connected with port 2010 and checksum threads with port 20180.
-  -Default transfer block size is 256MB, which can be tuned with INTEGRITY_VERIFICATION_BLOCK_SIZE in source code.
-  -We commented codes for **fault injection** to each block of transferred file, because if you will not be able to provide correct filesystem name, instead of injecting fault to transferred file it might inject it to some other parts of memory which might mess up your system. Please check [paper] (https://github.com/batyrchary) for detailed explanation of injection directly to disk.
+  - By default transfer threads will be connected with port 2010 and checksum threads with port 20180.
+  
+  - Default transfer block size is 256MB, which can be tuned with INTEGRITY_VERIFICATION_BLOCK_SIZE in source code.
+  
+  - We commented codes for **fault injection** to each block of transferred file, because if you will not be able to provide correct filesystem name, instead of injecting fault to transferred file it might inject it to some other parts of memory which might mess up your system. Please check (https://github.com/batyrchary) for detailed explanation of injection directly to disk.
 
  
  ##### 3. RIVA
