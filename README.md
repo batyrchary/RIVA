@@ -6,7 +6,7 @@
  
   ##### 1. Dependency
   
-  We used vmtouch to evict pages from cache. Details of installation and usage can be found in https://hoytech.com/vmtouch/
+  We used vmtouch to evict pages from cache. For details of installation and usage of vmtouch please check: https://hoytech.com/vmtouch/
   
   
   ##### 2. Notes
@@ -15,10 +15,15 @@
   
   - Default transfer block size is 256MB, which can be tuned with INTEGRITY_VERIFICATION_BLOCK_SIZE in source code.
   
-  - We commented codes for **fault injection** to each block of transferred file, because if you will not be able to provide correct filesystem name, instead of injecting fault to transferred file it might inject it to some other parts of memory which might mess up your system. Please check (https://github.com/batyrchary) for detailed explanation of injection directly to disk.
+  - We commented codes for **fault injection** to each block of transferred file, because if you will not be able to provide correct filesystem name, instead of injecting fault to transferred file it might inject it to some other parts of memory which might mess up your system. Please check (https://github.com/batyrchary) for detailed explanation of fault injection directly to disk.
+
 
  
- ##### 3. RIVA
+ ##### 3. Cite
+ Please cite: "Towards Securing Data Transfers Against Silent Data Corruption." Batyr Charyyev, Ahmed Alhussen, Hemanta Sapkota, Eric Pouyoul, Mehmet Gunes and Engin Arslan IEEE/ACM International Symposium in Cluster, Cloud, and Grid Computing (CCGrid) 2019.
+ 
+ 
+ ##### 4. RIVA
  Compile and Run Receiver
  ```sh
  $ cd src/
