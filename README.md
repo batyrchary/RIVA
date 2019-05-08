@@ -7,40 +7,13 @@
  Compile and Run Receiver
  ```sh
  $ cd src/
-$ javac FiverReceiver.java  # Compile Receiver
-$ java FileReceiver [destination path] # Run Receiver, will be listening on port 2008
+$ javac RIVA_Receiver.java  # Compile Receiver
+$ java RIVA_Receiver [destination path] # Run Receiver, will be listening on port 2010 and checksum thread will be connected with port 20180
 ```
 Compile and Run Sender
  ```sh
  $ cd src/
-$ javac FiverSender.java  # Compile Sender
-$ java FileReceiver <source_IP> <source_folder>  # Run Sender, will try connecting to port 2008
+$ javac RIVA_Sender.java  # Compile Sender
+$ java RIVA_Receiver <source_IP> <source_folder>  # Run Sender, will try connecting to port 2010 
 ```
 
- ##### 2. Block-Level Pipelining. [Paper](https://ieeexplore.ieee.org/abstract/document/7840953)
- Compile and Run Receiver
- ```sh
- $ cd src/
-$ javac BlockLevelPipeliningReceiver.java  # Compile Receiver
-$ java BlockLevelPipeliningReceiver [destination path] # Run Receiver, will be listening on port 2038
-```
-Compile and Run Sender. Block-level pipelining works by sending/verifying blocks of  files. Block size is set to 256 MB by default by can be changed by setting up third command-line argument
- ```sh
- $ cd src/
-$ javac BlockLevelPipeliningSender.java  # Compile Sender
-$ javac BlockLevelPipeliningSender <source_IP> <source_folder> [block-size-in-byte] # Run Sender, will try connecting to port 2038
-```
-
- ##### 3. File-Level Pipelining
- Compile and Run Receiver
- ```sh
- $ cd src/
-$ javac FileLevelPipeliningReceiver.java  # Compile Receiver
-$ java FileLevelPipeliningReceiver [destination path] # Run Receiver, will be listening on port 2028
-```
-Compile and Run Sender. It is possible to sort files by file name if file names are integer
- ```sh
- $ cd src/
-$ javac FileLevelPipeliningSender.java  # Compile Sender
-$ java FileLevelPipeliningSender <source_IP> <source_folder>  # Run Sender, will try connecting to port 2028
-```
