@@ -2,6 +2,7 @@ import javax.sound.midi.Receiver;
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.ByteBuffer;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.*;
@@ -9,50 +10,17 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
-public class DynamicReceiver {
-
-
-    public static boolean allFileTransfersCompleted = false;
-
-    public static LinkedList<DynamicCommon.FiverFile> files=new LinkedList<>();
-    public static LinkedList<ServerSocket> servers=new LinkedList<>();
-
-    public static LinkedList<ReceiverRunnable> receiverThreads=new LinkedList<>();
-    public static LinkedList<ChecksumRunnable> checksumThreads=new LinkedList<>();
-
-    public static LinkedList<Socket> sockets=new LinkedList<>();
-
-
-
+public class DynamicReceiver
+{
 
 
     public static String baseDir="-1";
     public static int port=-1;
-    public static long INTEGRITY_VERIFICATION_BLOCK_SIZE = 0;  //256 * 1024 * 1024;
-
-    public static LinkedBlockingQueue<DynamicCommon.FiverFile> checksumFiles=new LinkedBlockingQueue<>();
-
-    public static int threadID=0;
-    public static int CHthreadID=0;
-
-
-    public static ServerSocket ss;
 
 
 
-
-
-
-
-
-
-    public static void tune()
-    {
-    }
-
-
-
-
+    public static volatile Map<Integer, ReceiverRunnable> receiverThreads=new HashMap<>();
+    public static volatile int receiver_thread_id=1;
 
 
 
@@ -61,253 +29,125 @@ public class DynamicReceiver {
         int threadID;
         boolean shouldIfinish=false;
         Thread t;
-        Socket clientSock;
-        //long blockSize;
+        ServerSocket ss;
 
-        public ReceiverRunnable(int threadID, Socket s)
+        public ReceiverRunnable(int receiverthreadid)
         {
-            this.threadID=threadID;
-            this.clientSock=s;
-            t=new Thread(this);
-            t.start();
-        }
-
-        @Override
-        public void run() {
             try
             {
-                DataInputStream dataInputStream = new DataInputStream(clientSock.getInputStream());
-
-                while (!shouldIfinish)
-                {
-                    if(dataInputStream.available()==0)
-                        continue;
-                    String fileName = dataInputStream.readUTF();
-                    long offset = dataInputStream.readLong();
-                    long fileSize = dataInputStream.readLong();
-
-
-                    RandomAccessFile randomAccessFile = new RandomAccessFile(baseDir + fileName, "rw");
-
-                    if (offset > 0) {
-                        randomAccessFile.getChannel().position(offset);
-                    }
-                    long remaining = fileSize;
-                    int read = 0;
-
-
-                    byte[] bufferChecksum = new byte[Math.toIntExact(remaining)];
-                    int bufferindex=0;
-
-                    while (remaining > 0) {
-
-                        byte[] buffer = new byte[128 * 1024];
-
-                        read = dataInputStream.read(buffer, 0, (int) Math.min(buffer.length, remaining));
-                        if (read == -1)
-                            break;
-                        remaining -= read;
-                        randomAccessFile.write(buffer, 0, read);
-
-                        for(int bi=0; bi<read; bi++)
-                        {
-                            bufferChecksum[bufferindex+bi]=buffer[bi];
-                        }
-
-                        bufferindex=bufferindex+read;
-
-                    }
-                    randomAccessFile.close();
-                    if (read == -1) {
-                        System.out.println("Read -1, closing the connection...");
-                        return;
-                    }
-                    checksumFiles.offer(new DynamicCommon.FiverFile(new File(baseDir + fileName), offset, fileSize, bufferChecksum));
-
-                }
-                dataInputStream.close();
-                clientSock.close();
-            } catch (Exception e) {
-                System.out.println("exeception in saver");
-                e.printStackTrace();
+                this.threadID=receiverthreadid;
+                ss = new ServerSocket(port+receiverthreadid);
+                t=new Thread(this);
+                t.start();
             }
+            catch (Exception e){e.printStackTrace();}
         }
-    }
-
-
-    public static void changeThreads(String which, String type, int howmuch)
-    {
-        if(which.equals("transfer"))
-        {
-            if (type.equals("increment"))
-            {
-                try
-                {
-                    while (true)
-                    {
-                        Socket clientSock = ss.accept();
-                        clientSock.setSoTimeout(10000);
-                        System.out.println("Connection established from  " + clientSock.getInetAddress());
-                        sockets.add(clientSock);
-
-                        ReceiverRunnable receiver= new ReceiverRunnable(threadID++, clientSock);
-                        receiverThreads.add(receiver);
-                    }
-                } catch (Exception e) {
-                    System.out.println(e);
-                }
-            }
-            else if (type.equals("decrement"))
-            {
-                for(int i=0; i<howmuch; i++)
-                {
-                    sockets.remove(sockets.size() - 1);
-                    receiverThreads.get(receiverThreads.size() - 1).shouldIfinish = true; //finish last thread
-                    receiverThreads.remove(receiverThreads.size() - 1);            //last one
-                }
-            }
-        }
-
-
-
-        else if(which.equals("checksum"))
-        {
-            if (type.equals("increment"))
-            {
-                for (int i = 0; i < howmuch; i++)
-                {
-                    ChecksumRunnable checksumRunnable = new ChecksumRunnable(CHthreadID++);
-                    checksumThreads.add(checksumRunnable);
-                }
-
-            }
-            else if (type.equals("decrement"))
-            {
-                for (int i = 0; i < howmuch; i++) {
-                    checksumThreads.remove(checksumThreads.size() - 1);
-                    checksumThreads.get(checksumThreads.size() - 1).shouldIfinish = true; //finish last thread
-                    checksumThreads.remove(checksumThreads.size() - 1);            //last one
-                }
-
-            }
-        }
-    }
-
-
-
-
-
-    public static void initial(int number_of_receivers, int number_of_checksummers, int blocksize )
-    {
-        //changeThreads("blocksize","increment", blocksize);
-        changeThreads("transfer","increment", number_of_receivers);
-        changeThreads("checksum","increment", number_of_checksummers);
-
-        DynamicCommon.sleeper(3000);
-    }
-
-
-    public static class ChecksumRunnable implements Runnable
-    {
-
-        int threadID;
-        boolean shouldIfinish=false;
-        Thread t;
-        MessageDigest md = null;
-
-
-        public ChecksumRunnable(int threadID)
-        {
-            this.threadID=threadID;
-
-            t=new Thread(this);
-            t.start();
-        }
-
-
-        long totalChecksumTime = 0;
 
         @Override
-        public void run() {
-
+        public void run()
+        {
             try {
-                md = MessageDigest.getInstance("MD5");
+                while (true)
+                {
+                    Socket clientSock = ss.accept();
+                    System.out.println("Connection established from  " + clientSock.getInetAddress());
 
-                md.reset();
-                DataOutputStream dataOutputStream = null;
+                    DataInputStream dataInputStream = new DataInputStream(clientSock.getInputStream());
 
-                ServerSocket socket = new ServerSocket(20180);
-                dataOutputStream = new DataOutputStream(socket.accept().getOutputStream());
-                System.out.println("Checksum Connection accepted");
+                    while (!shouldIfinish) {
+                        if (dataInputStream.available() == 0)
+                            continue;
 
+                        String fileName = dataInputStream.readUTF();
+                        if (fileName.equals("done")) {
+                            System.out.println("done received by thread=" + threadID);
+                            break;
+                        }
+                        long offset = dataInputStream.readLong();
+                        long fileSize = dataInputStream.readLong();
+                        long file_id = dataInputStream.readLong();
 
-                while (!shouldIfinish) {
-                    DynamicCommon.FiverFile fiverFile = null;
+                        RandomAccessFile randomAccessFile = new RandomAccessFile(baseDir + fileName, "rw");
 
-                    fiverFile = checksumFiles.poll(Long.MAX_VALUE, TimeUnit.SECONDS);
+                        if (offset > 0) {
+                            randomAccessFile.getChannel().position(offset);
+                        }
 
-                    if (fiverFile == null) {
-                        continue;
+                        long remaining = fileSize;
+                        int read = 0;
+
+                        while (remaining > 0) {
+                            byte[] buffer = new byte[128 * 1024];
+
+                            read = dataInputStream.read(buffer, 0, (int) Math.min(buffer.length, remaining));
+                            if (read == -1)
+                                break;
+
+                            remaining -= read;
+                            randomAccessFile.write(buffer, 0, read);
+                        }
+                        randomAccessFile.close();
+                        if (read == -1) {
+                            System.out.println("Read -1, closing the connection...");
+                            return;
+                        }
+
+                        //    synchronized (checksumFiles)
+                        //  {
+                        //     checksumFiles.offer(new DynamicCommon.FiverFile(new File(baseDir + fileName), offset, fileSize, null, file_id));
+                        //}
                     }
-                    String fileName = fiverFile.file.getName();
-                    long fileOffset = fiverFile.offset;
-                    long fileLength = fiverFile.length;
+                    dataInputStream.close();
 
-                    md.update(fiverFile.buffer, 0, Math.toIntExact(fiverFile.length));
-                    byte[] digest = md.digest();
+                    clientSock.close();
 
-                    //String hex = (new HexBinaryAdapter()).marshal(digest);
-                    String hex = "aa";
-
-                    System.out.println("Sending hex:" + hex + " bytes:" + fileLength);
-                    dataOutputStream.writeUTF(hex);
-                    md.reset();
+                }
+                } catch(Exception e){
+                    System.out.println("exeception in saver");
+                    e.printStackTrace();
                 }
 
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
         }
     }
 
 
-    public DynamicReceiver (int port, String path)
+    public DynamicReceiver ()
     {
-        try {
-            ss = new ServerSocket(2008);
-        }catch (Exception e){e.printStackTrace();}
-
-
-
-        initial(1,1,256);
-
-
         /*
-        DynamicCommon.sleeper(100);
+        changeThreads("checksum","increment", 1);
+
         while(!files.isEmpty())
         {
-            // tune();
+            String increase_decrease="increment";
+
+            int random = (int )(Math.random() * 30 + 1);
+            if(random%2==1) increase_decrease="decrement";
+            if((increase_decrease.equals("decrement") && random >= checksumThreads.size())) { }
+            else if ((increase_decrease.equals("increment") && (random + checksumThreads.size()) > 50)) { }
+            else
+            {
+                changeThreads("checksum", increase_decrease, random);
+            }
+
             DynamicCommon.sleeper(100);
-            // System.out.println("karoce burdayim");
+            System.out.println("#checksum="+checksumThreads.size());
         }
-
-        System.out.println("finished");
-        changeThreads("transfer","decrement", senderThreads.size());
         */
-
     }
-
-
-
 
     public static void main(String[] args)
     {
-        //String path = args[1];
-
-        String path="/Users/batyrchary/Desktop/journalFIVER/receiver/";
+        String path="/Users/batyrchary/Desktop/projects/RIVA_Dynamic/r/";
         baseDir=path;
         port=2008;
 
-        DynamicReceiver dc = new DynamicReceiver(port, path);
+        for(int i=0; i<50; i++)
+        {
+            ReceiverRunnable receiver = new ReceiverRunnable(receiver_thread_id);
+            receiverThreads.put(receiver_thread_id,receiver);
+            receiver_thread_id++;
+        }
+
+        DynamicReceiver dr = new DynamicReceiver();
     }
 }

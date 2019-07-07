@@ -17,24 +17,34 @@ public class DynamicCommon {
     }
 
     public static class FiverFile {
-        public FiverFile(File file, long offset, long length, byte[] buffer) {
+        public FiverFile(File file, long offset, long endoffset, byte[] buffer, long id) {
             this.file = file;
             this.offset = offset;
-            this.length = length;
+            this.endoffset = endoffset;
+            this.length = endoffset-offset;
             this.buffer=buffer;
+            this.isEvicted=false;
+            this.id=id;
         }
         public FiverFile(FiverFile f) {
             this.file = f.file;
             this.offset = f.offset;
-            this.length = f.length;
+            this.endoffset = f.endoffset;
+            this.length=f.length;
             this.buffer =  f.buffer;
+            this.isEvicted=f.isEvicted;
+            this.id=f.id;
         }
         File file;
         Long offset;
+        Long endoffset;
         Long length;
         byte[] buffer;
+        boolean isEvicted = false;
+        long id;
     }
 
+    /*
     public static class Item {
         byte[] buffer;
         int length;
@@ -44,11 +54,12 @@ public class DynamicCommon {
             this.length = length;
         }
     }
+    */
 
 
-
-
-    public static class server implements Runnable {
+/*
+    public static class server implements Runnable
+    {
         Thread t;
 
         public server() {
@@ -75,6 +86,6 @@ public class DynamicCommon {
             System.out.println("server ends");
         }
     }
-
+*/
 
 }
