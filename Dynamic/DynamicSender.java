@@ -1,7 +1,9 @@
+import javax.xml.bind.annotation.adapters.HexBinaryAdapter;
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.ByteBuffer;
+import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.*;
@@ -22,12 +24,7 @@ public class DynamicSender
     public static volatile Map<Integer, SenderRunnable> senderThreads_tobedeleted = new HashMap<>();
     public static volatile Map<Integer, ChecksumRunnable>  checksumThreads = new HashMap<>();
 
-    public static volatile LinkedList<DynamicCommon.FiverFile> files=new LinkedList<>();
-    public static LinkedBlockingQueue<DynamicCommon.FiverFile> checksumFiles=new LinkedBlockingQueue<>(10000);
 
-    public static volatile Map<Long, String> computed_checksums = new HashMap<>();
-    public static volatile Map<Long, DynamicCommon.FiverFile> computed_checksums_fiverFile = new HashMap<>();
-    public static volatile Map<Long, String> received_checksums = new HashMap<>();
 
 
     public static String destination_ip="-1";
@@ -43,6 +40,35 @@ public class DynamicSender
     public static volatile Long fiver_id=0l;
 
     public static volatile boolean allFileTransfersCompleted = false;
+
+
+    public static volatile LinkedList<DynamicCommon.FiverFile> files=new LinkedList<>();
+    public static LinkedBlockingQueue<DynamicCommon.FiverFile> checksumFiles=new LinkedBlockingQueue<>(10000);
+
+    public static volatile Map<Long, DynamicCommon.FiverFile> checksums_being_computed = new HashMap<>();
+    public static volatile Map<Long, DynamicCommon.FiverFile> files_being_transferred = new HashMap<>();
+
+
+
+    public static volatile Map<Long, String> computed_checksums = new HashMap<>();
+    public static volatile Map<Long, DynamicCommon.FiverFile> computed_checksums_fiverFile = new HashMap<>();
+    public static volatile Map<Long, String> received_checksums = new HashMap<>();
+
+
+    public static volatile Integer lock_for_checksumFiles_inTransfer_threads=1;
+    public static volatile Integer lock_for_checksumFiles_inChecksum_threads=1;
+
+
+
+    public static volatile int total_files_sent=0;
+    public static volatile int total_checksum_files=0;
+    public static volatile int total_checksums_computed=0;
+    public static volatile int total_checksums_received=0;
+    public static volatile int total_checksums_matched=0;
+
+    public static volatile Long totalTransferredBytes = 0l;
+    public static volatile Long totalChecksumBytes = 0l;
+
 
 
     public static class SenderRunnable implements Runnable
@@ -115,13 +141,25 @@ public class DynamicSender
                         continue;
                     }
 
-                    //send file metadata
-                    System.out.println("sending from thread=" + this.threadID+"\tnumber of threads="+senderThreads.size());
+                    synchronized (files_being_transferred)
+                    {
+                        files_being_transferred.put(currentFile.id, currentFile);
+
+                        total_files_sent++;
+                    }
+
+
                     String currentFileName = currentFile.file.getName();
                     dos.writeUTF(currentFileName);
                     dos.writeLong(currentFile.offset);
                     dos.writeLong(currentFile.length);
                     dos.writeLong(currentFile.id);
+
+                    String checkprint="file"+currentFile.file+"\toffset="+currentFile.offset;
+                    checkprint=checkprint+"\t"+"length="+currentFile.length+"\tid="+currentFile.id;
+
+                   // System.out.println(checkprint);
+
 
                     FileInputStream fis = new FileInputStream(currentFile.file);
                     if (currentFile.offset > 0)
@@ -130,10 +168,6 @@ public class DynamicSender
                     }
 
                     Long remaining = currentFile.length;
-
-                    byte[] bufferChecksum = new byte[Math.toIntExact(remaining)];
-
-                    int bufferindex = 0;
 
                     while (remaining > 0)
                     {
@@ -147,18 +181,23 @@ public class DynamicSender
                         remaining -= n;
                         dos.write(buffer, 0, n);
 
-                        for (int bi = 0; bi < n; bi++) {
-                            bufferChecksum[bufferindex + bi] = buffer[bi];
+                        synchronized (totalTransferredBytes)
+                        {
+                            totalTransferredBytes = totalTransferredBytes + n;
                         }
-
-                        bufferindex = bufferindex + n;
                     }
 
-                    currentFile.buffer = bufferChecksum;
+                    synchronized (lock_for_checksumFiles_inTransfer_threads)
+                    {
+                        checksumFiles.offer(currentFile);
 
+                        total_checksum_files++;
+                    }
 
-                    checksumFiles.offer(currentFile);
-
+                    synchronized (files_being_transferred)
+                    {
+                        files_being_transferred.remove(currentFile.id);
+                    }
 
                     fis.close();
                 }
@@ -168,10 +207,12 @@ public class DynamicSender
                 synchronized (senderThreads_tobedeleted)
                 {
                     senderThreads_tobedeleted.remove(this.threadID);
-                    System.out.println("i am exiting transfer thread="+threadID+"\tsthreadID="+sender_thread_id);
+                //    System.out.println("i am exiting transfer thread="+threadID+"\tsthreadID="+sender_thread_id);
                 }
 
-            } catch (Exception e){ System.out.println("cant get output stream"); }
+            } catch (Exception e){
+                //System.out.println("cant get output stream");
+                }
         }
     }
 
@@ -203,39 +244,85 @@ public class DynamicSender
                 md = MessageDigest.getInstance("MD5");
                 md.reset();
 
+                byte[] buffer = new byte[128 * 1024];
                 while (!shouldIfinish)
                 {
                     DynamicCommon.FiverFile currentFile = null;
-                //    synchronized (checksumFiles)
-                //    {
-                        currentFile = checksumFiles.poll(1, TimeUnit.SECONDS);
-                 //   }
+
+                    synchronized (lock_for_checksumFiles_inChecksum_threads)
+                    {
+                        currentFile = checksumFiles.poll();
+                    }
+
+
                     if (currentFile == null)
                     {
                     //    DynamicCommon.sleeper(100);
                         continue;
                     }
 
-                    //md.update(currentFile.buffer, 0, Math.toIntExact(currentFile.length));
+                    synchronized (checksums_being_computed)
+                    {
+                        checksums_being_computed.put(currentFile.id, currentFile);
+                        total_checksums_computed++;
+                    }
 
-                    String tobedigested="anasinisatim";
-                    //md.update(tobedigested.getBytes(),0,tobedigested.length());
 
-                    //byte[] digest = md.digest();
-                    //String hex = (new HexBinaryAdapter()).marshal(digest);
-                    //String hex = digest.toString();
+                    FileInputStream fis = new FileInputStream(currentFile.file);
 
-                    String hex=tobedigested;
+                    if (currentFile.offset > 0)
+                    {
+                        fis.getChannel().position(currentFile.offset);
+                    }
 
-                    currentFile.buffer=null;
-                    //synchronized (computed_checksums)
-                    //{
+                    DigestInputStream dis = new DigestInputStream(fis, md);
+
+                    long remaining = currentFile.length;
+
+                    int read;
+
+                    while (remaining > 0)
+                    {
+                        read = dis.read(buffer, 0, (int)Math.min(buffer.length, remaining));
+
+                        synchronized (totalChecksumBytes)
+                        {
+                            totalChecksumBytes = totalChecksumBytes + read;
+                        }
+
+                        if (read == -1)
+                        {
+                            Thread.sleep(100);
+                        }
+                        else
+                        {
+                            remaining -= read;
+                        }
+                    }
+                    dis.close();
+                    fis.close();
+                    byte[] digest = md.digest();
+                    String hex = (new HexBinaryAdapter()).marshal(digest);
+
+                    md.reset();
+
+                    //String tobedigested="anasinisatim";
+                    //String hex=tobedigested;
+
+                    synchronized (computed_checksums)
+                    {
+                    //    System.out.println("putting id="+currentFile.id+"\tdigest="+hex);
+
                         computed_checksums.put(currentFile.id, hex);
                         computed_checksums_fiverFile.put(currentFile.id, currentFile);
-                    //}
-                    md.reset();
+                    }
+
+                    synchronized (checksums_being_computed)
+                    {
+                        checksums_being_computed.remove(currentFile.id);
+                    }
                 }
-                System.out.println("checksum thread is exiting="+threadID);
+            //    System.out.println("checksum thread is exiting="+threadID);
             }
             catch (Exception e)
             {
@@ -250,18 +337,14 @@ public class DynamicSender
         Thread t;
         Socket s;
 
-        public ChecksumReceiverRunnable(int threadID)
-        {
-            try
-            {
+        public ChecksumReceiverRunnable(int threadID) {
+            try {
                 this.threadID = threadID;
-                s = new Socket(destination_ip, 20180);
+                s = new Socket(destination_ip, 2060);
 
                 t = new Thread(this);
                 t.start();
-            }
-            catch (Exception e)
-            {
+            } catch (Exception e) {
                 e.printStackTrace();
             }
         }
@@ -273,64 +356,103 @@ public class DynamicSender
             {
                 DataInputStream dataInputStream = new DataInputStream(s.getInputStream());
 
-                long destination_file_id = dataInputStream.readLong();
-                String destinationHex = dataInputStream.readUTF();
-
-                if(computed_checksums.containsKey(destination_file_id))
+                while (!allFileTransfersCompleted)
                 {
-                    String hex;
-                    DynamicCommon.FiverFile newFile;
-                    synchronized (computed_checksums)
+
+                    if(dataInputStream.available()>0)
                     {
-                        hex = computed_checksums.get(destination_file_id);
-                        computed_checksums.remove(destination_file_id);
-                        newFile = computed_checksums_fiverFile.get(destination_file_id);
-                        computed_checksums_fiverFile.remove(destination_file_id);
-                    }
+                        long destination_file_id = dataInputStream.readLong();
+                        String destinationHex = dataInputStream.readUTF();
 
-                    if (hex.compareTo(destinationHex) != 0) // Checksums dont match
-                    {
-                        synchronized (files)
+                        total_checksums_received++;
+
+                        if (computed_checksums.containsKey(destination_file_id))
                         {
-                            files.add(newFile);
-                            System.out.println("File added " + files.size() + " files left");
-                        }
-                    }
-                }
-                else
-                {
-                    received_checksums.put(destination_file_id,destinationHex);
-                }
+                            total_checksums_matched++;
 
+                            //System.out.println("exist id="+destination_file_id+"\tdigest="+destinationHex);
 
-                for ( Long destination_file_id1 : received_checksums.keySet())
-                {
-                    destinationHex = received_checksums.get(destination_file_id1);
-
-                    if(computed_checksums.containsKey(destination_file_id1))
-                    {
-                        String hex;
-                        DynamicCommon.FiverFile newFile;
-                        synchronized (computed_checksums)
-                        {
-                            hex = computed_checksums.get(destination_file_id1);
-                            computed_checksums.remove(destination_file_id1);
-                            newFile = computed_checksums_fiverFile.get(destination_file_id1);
-                            computed_checksums_fiverFile.remove(destination_file_id1);
-                        }
-
-                        if (hex.compareTo(destinationHex) != 0) // Checksums dont match
-                        {
-                            synchronized (files)
+                            String hex;
+                            DynamicCommon.FiverFile newFile;
+                            synchronized (computed_checksums)
                             {
-                                files.add(newFile);
-                                System.out.println("File added " + files.size() + " files left");
+                                hex = computed_checksums.get(destination_file_id);
+                                computed_checksums.remove(destination_file_id);
+                                newFile = computed_checksums_fiverFile.get(destination_file_id);
+                                computed_checksums_fiverFile.remove(destination_file_id);
+
+
+                            }
+
+                            if (hex.compareTo(destinationHex) != 0) // Checksums dont match
+                            {
+                                String printed=hex+"\n"+destinationHex;
+
+                                System.out.println(printed);
+
+                                synchronized (files)
+                                {
+                                    files.add(newFile);
+                                    System.out.println("File added " + files.size() + " files left");
+                                }
                             }
                         }
+                        else
+                        {
+                            //    System.out.println("doesnot exist id="+destination_file_id+"\tdigest="+destinationHex);
+                            received_checksums.put(destination_file_id, destinationHex);
+                        }
+
                     }
+
+
+                    for (Iterator<Map.Entry<Long, String>> it = received_checksums.entrySet().iterator(); it.hasNext(); )
+                    {
+
+                        Map.Entry<Long, String> entry = it.next();
+
+                        String destinationHex = entry.getValue();
+                        Long destination_file_id1 = entry.getKey();
+
+                        if (computed_checksums.containsKey(destination_file_id1))
+                        {
+                            total_checksums_matched++;
+
+                            String hex;
+                            DynamicCommon.FiverFile newFile;
+                            synchronized (computed_checksums)
+                            {
+                                hex = computed_checksums.get(destination_file_id1);
+                                computed_checksums.remove(destination_file_id1);
+                                newFile = computed_checksums_fiverFile.get(destination_file_id1);
+                                computed_checksums_fiverFile.remove(destination_file_id1);
+                            }
+
+                            if (hex.compareTo(destinationHex) != 0) // Checksums dont match
+                            {
+                                String printed=hex+"\n"+destinationHex;
+                                System.out.println(printed);
+
+                                synchronized (files)
+                                {
+                                    files.add(newFile);
+                                    System.out.println("File added " + files.size() + " files left");
+                                }
+                            }
+
+                            it.remove();
+                        }
+                    }
+
+
+                    if (files.isEmpty() && checksumFiles.isEmpty() && computed_checksums.isEmpty() && computed_checksums_fiverFile.isEmpty() && received_checksums.isEmpty()
+                            && files_being_transferred.isEmpty() && checksums_being_computed.isEmpty()) {
+                        allFileTransfersCompleted = true;
+                    }
+
                 }
             }
-            catch (Exception e)
+            catch(Exception e)
             {
                 e.printStackTrace();
             }
@@ -434,13 +556,38 @@ public class DynamicSender
         filereader(path);
 
         initial(5,3,5);
-        DynamicCommon.sleeper(100);
+        DynamicCommon.sleeper(1000);
+
+
+
+
+        long lastTransferredBytes = 0;
+        long lastChecksumBytes = 0;
 
         while(!allFileTransfersCompleted)
         {
-            DynamicCommon.sleeper(100);
+
+            double transferThrInMbps = 8 * (totalTransferredBytes-lastTransferredBytes)/(1024*1024);
+            double checksumThrInMbps = 8 * (totalChecksumBytes-lastChecksumBytes)/(1024*1024);
+
+            System.out.println("Transfer throughput:" + transferThrInMbps + "Mb/s \t Checksum throughput:" + checksumThrInMbps + " Mb/s");
+            lastTransferredBytes = totalTransferredBytes;
+            lastChecksumBytes = totalChecksumBytes;
+
+
+
+
+
+
+
+            String operation_transfer="nothing done for transfer";
+            String operation_blocksize="nothing done for blocksize";
+            String operation_checksum="nothing done for checksum";
+
 
             String increase_decrease="increment";
+
+
 
             int random = rand.nextInt(50)+1; //[1,50]
 
@@ -448,19 +595,20 @@ public class DynamicSender
             if ((increase_decrease.equals("decrement") && random >= sender_thread_id)) {
             } else if ((increase_decrease.equals("increment") && (random + sender_thread_id) > 50)) {
             } else {
-                System.out.println("operation=" + increase_decrease + "\trandom=" + random);
                 changeThreads("transfer", increase_decrease, random);
+                operation_transfer="transfer "+increase_decrease+" by "+random;
             }
 
+
             increase_decrease="increment";
-            random = (int )(Math.random() * 10 + 1);
+            random = rand.nextInt(5)+1; //[1,5]
             if(random%2==1) increase_decrease="decrement";
-            if((increase_decrease.equals("decrement") && random >= INTEGRITY_VERIFICATION_BLOCK_SIZE)) { }
-            else if((increase_decrease.equals("increment") && (random + INTEGRITY_VERIFICATION_BLOCK_SIZE)>=10*1024*1024)) { }
+            if((increase_decrease.equals("decrement") && random >= INTEGRITY_VERIFICATION_BLOCK_SIZE/(1024*1024))) { }
+            else if((increase_decrease.equals("increment") && (random + INTEGRITY_VERIFICATION_BLOCK_SIZE/(1024*1024))>=10)) { }
             else
             {
-
                 changeThreads("blocksize", increase_decrease, random);
+                operation_blocksize="blocksize "+increase_decrease+" by "+random;
             }
 
             random = (int )(Math.random() * 30 + 1);
@@ -470,11 +618,42 @@ public class DynamicSender
             else
             {
                 changeThreads("checksum", increase_decrease, random);
+                operation_checksum="checksum "+increase_decrease+" by "+random;
             }
 
 
-            DynamicCommon.sleeper(100);
-            System.out.println("#transferThreads="+senderThreads.size()+"\tsthreadIDmax="+sender_thread_id+"\tblocksize="+INTEGRITY_VERIFICATION_BLOCK_SIZE/(1024*1024));//+"\t#checksum="+checksumThreads.size());
+            DynamicCommon.sleeper(1000);
+            //System.out.println("#transferThreads="+senderThreads.size()+"\tsthreadIDmax="+sender_thread_id+"\tblocksize="+INTEGRITY_VERIFICATION_BLOCK_SIZE/(1024*1024));//+"\t#checksum="+checksumThreads.size());
+
+
+
+
+            String printlineOperations="<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<\n";
+            printlineOperations=printlineOperations+operation_transfer+"\t"+operation_blocksize+"\t"+operation_checksum;
+           // printlineOperations=printlineOperations+"\n>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>";
+
+            String printline="------------------------------------------------------\n";
+            printline=printline+"senderThreads_size="+senderThreads.size()+"\tsenderThreads_tobedeleted_size="+senderThreads_tobedeleted.size();
+            printline=printline+"\tchecksumThreads_size="+checksumThreads.size()+"\tblocksize="+INTEGRITY_VERIFICATION_BLOCK_SIZE/(1024*1024);
+            printline=printline+"\t\t\tsender_thread_id="+sender_thread_id+"\t\t\tchecksum_thread_id="+checksum_thread_id;
+            printline=printline+"\nfiles_size="+files.size()+"\t\tchecksumFiles_size="+checksumFiles.size()+"\t\tchecksums_being_computed_size="+checksums_being_computed.size();
+            printline=printline+"\nfiles_being_transferred_size="+files_being_transferred.size()+"\t\tcomputed_checksums_size="+computed_checksums.size();
+            printline=printline+"\tcomputed_checksums_fiverFile_size="+computed_checksums_fiverFile.size()+"\t\t\treceived_checksums_size="+received_checksums.size();
+            //printline=printline+"\n---------------------------------------------------";
+
+
+
+            String counter_printline="+++++++++++++++++++++++++++++++++++++++++++++++++\n";
+            counter_printline=counter_printline+"total_files_sent="+total_files_sent+"\ttotal_checksum_files="+total_checksum_files;
+            counter_printline=counter_printline+"\ttotal_checksums_computed="+total_checksums_computed+"\ttotal_checksums_received="+total_checksums_received;
+            counter_printline=counter_printline+"\ttotal_checksums_matched="+total_checksums_matched;
+            counter_printline=counter_printline+"\n++++++++++++++++++++++++++++++++++++++++++++++++++";
+
+
+            System.out.println(printlineOperations);
+            System.out.println(printline);
+            System.out.println(counter_printline);
+
         }
 
         System.out.println("finished");
@@ -485,7 +664,7 @@ public class DynamicSender
 
     public static void main(String[] args)
     {
-        String path="/Users/batyrchary/Desktop/projects/RIVA_Dynamic/s/";
+        String path="/home/bcharyyev/Desktop/RIVA_Dynamic/s/";
         destination_ip="localhost";
         base_directory=path;
         port=2008;
@@ -501,12 +680,12 @@ public class DynamicSender
         {
             for (File f : file.listFiles())
             {
-                files.add(new DynamicCommon.FiverFile(f, 0, f.length(),null, fiver_id++));
+                files.add(new DynamicCommon.FiverFile(f, 0, f.length(), fiver_id++));
             }
         }
         else
         {
-            files.add(new DynamicCommon.FiverFile(file, 0, file.length(),null, fiver_id++));
+            files.add(new DynamicCommon.FiverFile(file, 0, file.length(), fiver_id++));
         }
     }
 }
