@@ -26,13 +26,11 @@
  ##### 4. RIVA
  Compile and Run Receiver
  ```sh
- $ cd src/
 $ javac RIVA_Receiver.java  # Compile Receiver
 $ java RIVA_Receiver [destination path] # Run Receiver, will be listening on port 2010 
 ```
 Compile and Run Sender
  ```sh
- $ cd src/
 $ javac RIVA_Sender.java  # Compile Sender
 $ java RIVA_Receiver <source_IP> <source_folder>  # Run Sender, will try connecting to port 2010 
 ```
